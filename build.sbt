@@ -1,4 +1,4 @@
-name := "ReactivePubSub"
+name := "pubsub4s"
 organization := "io.fullstackanalytics"
 version := "0.1.0"
 
