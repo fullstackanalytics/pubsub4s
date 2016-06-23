@@ -3,11 +3,14 @@ package com.google.api.services.pubsub
 import akka.actor.ActorSystem
 import akka.pattern.after
 
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent._
 import scala.concurrent.duration._
 
 trait RetryLogic {
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  type Retries = Int
+  type Backoff = (Retries, TimeUnit) => TimeUnit
 
   def retry[B](op: () => Future[B], retries: Int)(implicit system: ActorSystem): Future[B] =
     op() recoverWith {

@@ -9,9 +9,7 @@ final case class ReceivedMessage(ackId: String, time: String, data: Array[Byte],
 
 object PullResponse {
 
-  type PullResponse = List[ReceivedMessage]
-
-  def apply(javaResponse: model.PullResponse): PullResponse =
+  def apply(javaResponse: model.PullResponse): List[ReceivedMessage] =
     javaResponse.getReceivedMessages().asScala.toList
       .map(r => {
         val msg = r.getMessage()

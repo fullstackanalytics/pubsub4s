@@ -1,15 +1,32 @@
 package com.google.api.services.pubsub
 
+import akka.actor.ActorSystem
+import akka.NotUsed
+import akka.stream._
+import akka.stream.scaladsl._
+import com.google.api.services.pubsub.model.PullRequest
+
 import scala.concurrent._
 import scala.concurrent.ExecutionContext.Implicits.global
-import PullResponse.{PullResponse => SerailizablePullResponse}
-import akka.actor.ActorSystem
-
 import scala.util.{Failure, Success, Try}
 
-class ReactivePubsub(javaPubsub: Pubsub) extends RetryLogic {
+class ReactivePubsub(javaPubsub: Pubsub)
+                    (implicit val system: ActorSystem, val context: ExecutionContext)
+  extends PublisherTrait {
 
-  def pullAsync(subscription: String, pullRequest: => model.PullRequest): Future[SerailizablePullResponse] =
+  def subscribe(subscription: String, pullRequest: => model.PullRequest): Source[Seq[ReceivedMessage], NotUsed] =
+    asyncRequestToSource(() => pullAsync(subscription, pullRequest))
+
+  def subscribeConcat(subscription: String, pullRequest: => model.PullRequest): Source[ReceivedMessage, NotUsed] =
+    asyncRequestToSource(() => pullAsync(subscription, pullRequest)).mapConcat{ seq => seq }
+
+  def subscribeFromStream(subscription: String, pullRequest: => model.PullRequest): Source[Future[List[ReceivedMessage]], NotUsed] = {
+    def iter(): Stream[Future[List[ReceivedMessage]]] = pullAsync(subscription, pullRequest) #:: iter()
+    val res = iter().toIterator
+    Source.fromIterator(() => res)
+  }
+
+  def pullAsync(subscription: String, pullRequest: => model.PullRequest): Future[List[ReceivedMessage]] =
     Future {
       // allocate additional logical thread for execution context.
       blocking {
@@ -22,16 +39,13 @@ class ReactivePubsub(javaPubsub: Pubsub) extends RetryLogic {
                           (implicit system: ActorSystem) =
     retry({() => pullAsync(subscription,pullRequest)}, retries)
 
-  def pullSync(subscription: String, pullRequest: => model.PullRequest): Try[SerailizablePullResponse] = Try {
+  def pullSync(subscription: String, pullRequest: => model.PullRequest): Try[List[ReceivedMessage]] = Try {
     PullResponse(javaPubsub.projects().subscriptions.pull(subscription, pullRequest).execute())
   }
 
-  def pullSyncNoTry(subscription: String, pullRequest: => model.PullRequest): SerailizablePullResponse =
-    PullResponse(javaPubsub.projects().subscriptions.pull(subscription, pullRequest).execute())
-
   def pullSyncWithRetries(numRetries: Int) (subscription: String, pullRequest: => model.PullRequest) = {
 
-    def loop(count: Int): Try[SerailizablePullResponse] = {
+    def loop(count: Int): Try[List[ReceivedMessage]] = {
       val result = pullSync(subscription, pullRequest); result match {
         case Failure(_) if count>0 => loop(count-1)
         case _ => result
@@ -45,9 +59,41 @@ class ReactivePubsub(javaPubsub: Pubsub) extends RetryLogic {
 
 object ReactivePubsub {
 
-  def apply(url: String): ReactivePubsub = {
+  def apply(url: String)(implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub = {
     val p: Pubsub = ???
     new ReactivePubsub(p)
+  }
+
+  /** experimental for small streams. in F#, there was nice way to compose
+    * sequences of asynchronous computations, and to defer execution w/in each iteration, i.e.,
+    *
+    * probably need Scalaz Process for that.
+    *
+    *  let rec pull (puller:from->RecordResult) offset = asyncSeq {
+    *    let results = puller offset
+    *    yield results.events |> Seq.ofArray
+    *
+    *    if !(results.endOfStream) then
+    *    yield! pull puller results.nextEventNum
+    *  }
+    *
+    */
+  def publisherTraversal(client: ReactivePubsub, pr: PullRequest, subscription: String)
+  : Future[Iterator[List[ReceivedMessage]]] = {
+
+    def loop(): Future[Stream[List[ReceivedMessage]]] =
+      for {
+        result <- client.pullAsync(subscription, pr)
+        size    = result.length
+        next   <- loop()
+      } yield {
+        if (size > 0)
+          result #:: next
+        else
+          Stream.empty[List[ReceivedMessage]]
+      }
+
+    loop() map(_.toIterator)
   }
 
 }
