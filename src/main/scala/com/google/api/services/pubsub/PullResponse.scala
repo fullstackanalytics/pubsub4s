@@ -5,7 +5,7 @@ import scala.collection.JavaConverters._
 
 // create a Serializable type that can be passed to Akka actors and flows
 
-final case class ReceivedMessage(ackId: String, time: String, data: Array[Byte], attributes: MMap[String,String])
+final case class ReceivedMessage(ackId: String, time: Option[String], data: Array[Byte], attributes: Option[MMap[String,String]])
 
 object PullResponse {
 
@@ -17,9 +17,13 @@ object PullResponse {
           r.getAckId(),
           msg.getPublishTime(),
           msg.decodeData(),
-          msg.getAttributes().asScala
+          msg.getAttributes().map(_.asScala)
         )
       })
 
+  implicit def null2Option[T](o: T): Option[T] = o match {
+    case null => None
+    case _ => Some(o)
+  }
 }
 

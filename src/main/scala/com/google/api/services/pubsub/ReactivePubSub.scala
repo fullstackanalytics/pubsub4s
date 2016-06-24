@@ -58,10 +58,18 @@ class ReactivePubsub(javaPubsub: Pubsub)
 }
 
 object ReactivePubsub {
+  import io.fullstack.common.PortableConfiguration
 
-  def apply(url: String)(implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub = {
-    val p: Pubsub = ???
-    new ReactivePubsub(p)
+  def apply(appName:String) (implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub =
+    apply(appName, None)(system, context)
+
+  def apply(appName: String, url: Option[String])(implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub = {
+    val p: Pubsub.Builder = PortableConfiguration.createPubsubClient()
+      .setApplicationName(appName)
+
+    url match { case Some(url) => p.setRootUrl(url); case _ => () }
+
+    new ReactivePubsub(p.build())
   }
 
   /** experimental for small streams. in F#, there was nice way to compose
