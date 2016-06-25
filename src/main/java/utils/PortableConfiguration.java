@@ -1,4 +1,4 @@
-package io.fullstack.common;
+package utils;
 
 import com.google.api.client.googleapis.auth.oauth2.GoogleCredential;
 import com.google.api.client.googleapis.util.Utils;
@@ -13,6 +13,8 @@ import java.io.IOException;
 
 /**
  * Create a Pubsub client using portable credentials.
+ *
+ * mostly from GCP tutorial
  */
 public class PortableConfiguration {
 

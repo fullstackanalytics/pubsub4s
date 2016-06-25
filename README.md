@@ -1,7 +1,7 @@
 # pubsub4s 
-WIP. Reactive Client for Google PubSub. Akka Source and serializable objects.
+Reactive client wrapper for Google PubSub java library.
 
-with emulator running...
+## Usage
 ```
 import com.google.api.services.pubsub
 import akka.stream._
@@ -10,10 +10,14 @@ import akka.stream.scaladsl._
 implicit val system = ActorSystem("reactive-pubsub")
 implicit val materializer = ActorMaterializer()
 
-ReactivePubsub("testing", "http://localhost:8430")
-  .subscribeConcat("projects/myproject/subscriptions/mysubscription")
+val pullRequest = PullRequest(10, false)
+ReactivePubsub("testing", "http://localhost:8430") // Emulator at locahost.
+  .subscribeConcat("projects/myproject/subscriptions/mysubscription", pullRequest)
   .map(msg => data.toString)
   .runWith(Sink.foreach(println))
-
 ```
+
+## Testing
+
+Use emulator on locahost.
 

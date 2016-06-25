@@ -2,51 +2,60 @@ package com.google.api.services.pubsub
 
 import akka.actor.ActorSystem
 import akka.NotUsed
-import akka.stream._
 import akka.stream.scaladsl._
-import com.google.api.services.pubsub.model.PullRequest
+import utils.PortableConfiguration
 
 import scala.concurrent._
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.{Failure, Success, Try}
+import scala.util.{Failure, Try}
+import scala.language.implicitConversions._
 
-class ReactivePubsub(javaPubsub: Pubsub)
-                    (implicit val system: ActorSystem, val context: ExecutionContext)
-  extends PublisherTrait {
+class ReactivePubsub(javaPubsub: Pubsub) extends PublisherTrait {
 
-  def subscribe(subscription: String, pullRequest: => model.PullRequest): Source[Seq[ReceivedMessage], NotUsed] =
+  def subscribe
+      (subscription: String, pullRequest: PullRequest)
+      (implicit ec: ExecutionContext, s: ActorSystem): Source[Seq[ReceivedMessage], NotUsed] =
     asyncRequestToSource(() => pullAsync(subscription, pullRequest))
 
-  def subscribeConcat(subscription: String, pullRequest: => model.PullRequest): Source[ReceivedMessage, NotUsed] =
+  def subscribeConcat
+      (subscription: String, pullRequest: PullRequest)
+      (implicit ec: ExecutionContext, s: ActorSystem): Source[ReceivedMessage, NotUsed] =
     asyncRequestToSource(() => pullAsync(subscription, pullRequest)).mapConcat{ seq => seq }
 
-  def subscribeFromStream(subscription: String, pullRequest: => model.PullRequest): Source[Future[List[ReceivedMessage]], NotUsed] = {
-    def iter(): Stream[Future[List[ReceivedMessage]]] = pullAsync(subscription, pullRequest) #:: iter()
+  def subscribeFromStream
+      (subscription: String, pullRequest: PullRequest)
+      (implicit ec: ExecutionContext, s: ActorSystem): Source[Future[List[ReceivedMessage]], NotUsed] = {
+
+    def iter(): Stream[Future[List[ReceivedMessage]]] =
+      pullAsync(subscription, pullRequest) #:: iter()
+
     val res = iter().toIterator
     Source.fromIterator(() => res)
   }
 
-  def pullAsync(subscription: String, pullRequest: => model.PullRequest): Future[List[ReceivedMessage]] =
+  // allocate additional logical thread for execution context.
+  def pullAsync
+      (subscription: String, pullRequest: PullRequest)
+      (implicit ec: ExecutionContext, s: ActorSystem): Future[List[ReceivedMessage]] =
     Future {
-      // allocate additional logical thread for execution context.
       blocking {
         javaPubsub.projects().subscriptions()
           .pull(subscription, pullRequest).execute()
       }
     } map (PullResponse(_))
 
-  def pullAsyncWithRetries(retries: Int)(subscription: String, pullRequest: => model.PullRequest)
-                          (implicit system: ActorSystem) =
-    retry({() => pullAsync(subscription,pullRequest)}, retries)
+  def pullAsyncWithRetries
+      (retries: Int)(subscription: String, pullRequest: PullRequest)
+      (implicit ec: ExecutionContext, system: ActorSystem) =
+    retry({() => pullAsync(subscription, pullRequest)}, retries)
 
-  def pullSync(subscription: String, pullRequest: => model.PullRequest): Try[List[ReceivedMessage]] = Try {
-    PullResponse(javaPubsub.projects().subscriptions.pull(subscription, pullRequest).execute())
+  def pullSync(subscription: String, maxMessages: Int, returnImmediately: Boolean): Try[List[ReceivedMessage]] = Try {
+    PullResponse(javaPubsub.projects().subscriptions.pull(subscription, PullRequest(maxMessages, returnImmediately)).execute())
   }
 
-  def pullSyncWithRetries(numRetries: Int) (subscription: String, pullRequest: => model.PullRequest) = {
+  def pullSyncWithRetries(numRetries: Int) (subscription: String, maxMessages: Int, returnImmediately: Boolean) = {
 
     def loop(count: Int): Try[List[ReceivedMessage]] = {
-      val result = pullSync(subscription, pullRequest); result match {
+      val result = pullSync(subscription, maxMessages, returnImmediately); result match {
         case Failure(_) if count>0 => loop(count-1)
         case _ => result
       }
@@ -58,36 +67,26 @@ class ReactivePubsub(javaPubsub: Pubsub)
 }
 
 object ReactivePubsub {
-  import io.fullstack.common.PortableConfiguration
 
   def apply(appName:String) (implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub =
     apply(appName, None)(system, context)
 
-  def apply(appName: String, url: Option[String])(implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub = {
+  def apply
+      (appName: String, url: Option[String])
+      (implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub = {
+
     val p: Pubsub.Builder = PortableConfiguration.createPubsubClient()
       .setApplicationName(appName)
 
-    url match { case Some(url) => p.setRootUrl(url); case _ => () }
+    url match { case Some(u) => p.setRootUrl(u); case _ => () }
 
     new ReactivePubsub(p.build())
   }
 
-  /** experimental for small streams. in F#, there was nice way to compose
-    * sequences of asynchronous computations, and to defer execution w/in each iteration, i.e.,
-    *
-    * probably need Scalaz Process for that.
-    *
-    *  let rec pull (puller:from->RecordResult) offset = asyncSeq {
-    *    let results = puller offset
-    *    yield results.events |> Seq.ofArray
-    *
-    *    if !(results.endOfStream) then
-    *    yield! pull puller results.nextEventNum
-    *  }
-    *
-    */
-  def publisherTraversal(client: ReactivePubsub, pr: PullRequest, subscription: String)
-  : Future[Iterator[List[ReceivedMessage]]] = {
+  // read all until at head of stream. Warning, execution commences immediately.
+  def readAll
+      (client: ReactivePubsub, pr: PullRequest, subscription: String)
+      (implicit system: ActorSystem, context: ExecutionContext): Future[Stream[ReceivedMessage]] = {
 
     def loop(): Future[Stream[List[ReceivedMessage]]] =
       for {
@@ -101,7 +100,7 @@ object ReactivePubsub {
           Stream.empty[List[ReceivedMessage]]
       }
 
-    loop() map(_.toIterator)
+    loop() map(x => x.flatMap(_.toStream))
   }
 
 }
