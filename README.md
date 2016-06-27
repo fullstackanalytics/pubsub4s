@@ -1,5 +1,7 @@
 # pubsub4s 
-Reactive client wrapper for Google PubSub java library.
+Reactive client wrapper for Google PubSub java library. 
+
+For use with Akka via custom `Source` and removal of `null`s which are not supported in Akka.
 
 ## Usage
 ```
