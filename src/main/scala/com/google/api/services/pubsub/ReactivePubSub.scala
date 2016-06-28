@@ -16,12 +16,12 @@ class ReactivePubsub(val javaPubsub: Pubsub) extends PublisherTrait {
 
   def subscribe
       (project: String, subscription: String, pullRequest: PullRequest)
-      (implicit ec: ExecutionContext, s: ActorSystem): Source[Seq[ReceivedMessage], NotUsed] =
+      (implicit blockingExecutionContext: ExecutionContext, s: ActorSystem): Source[Seq[ReceivedMessage], NotUsed] =
     asyncRequestToSource(() => pullAsync(project, subscription, pullRequest))
 
   def subscribeConcat
       (project: String, subscription: String, pullRequest: PullRequest)
-      (implicit ec: ExecutionContext, s: ActorSystem): Source[ReceivedMessage, NotUsed] =
+      (implicit blockingExecutionContext: ExecutionContext, s: ActorSystem): Source[ReceivedMessage, NotUsed] =
     asyncRequestToSource(() => pullAsync(project, subscription, pullRequest)).mapConcat{ seq => seq }
 
   def subscribeFromStream
@@ -42,24 +42,25 @@ class ReactivePubsub(val javaPubsub: Pubsub) extends PublisherTrait {
       (implicit ec: ExecutionContext, s: ActorSystem): Future[List[ReceivedMessage]] =
     Future {
       blocking {
-        javaPubsub.projects().subscriptions()
-          .pull(fqrn("subscriptions", project, subscription), pullRequest).execute()
+        pull(project, subscription, pullRequest)
       }
-    } map (PullResponse(_))
+    }
 
   def pullAsyncWithRetries
       (retries: Int)(project: String, subscription: String, pullRequest: PullRequest)
       (implicit ec: ExecutionContext, system: ActorSystem) =
     retry({() => pullAsync(project, subscription, pullRequest)}, retries)
 
-  def pullSync(subscription: String, maxMessages: Int, returnImmediately: Boolean): Try[List[ReceivedMessage]] = Try {
-    PullResponse(javaPubsub.projects().subscriptions.pull(subscription, PullRequest(maxMessages, returnImmediately)).execute())
+  def pullSync(project: String, subscription: String, pullRequest: PullRequest): Try[List[ReceivedMessage]] = Try {
+    PullResponse(
+      javaPubsub.projects().subscriptions
+        .pull(fqrn("subscriptions", project, subscription), pullRequest).execute())
   }
 
-  def pullSyncWithRetries(numRetries: Int) (subscription: String, maxMessages: Int, returnImmediately: Boolean) = {
+  def pullSyncWithRetries(numRetries: Int) (project: String, subscription: String, pullRequest: PullRequest) = {
 
     def loop(count: Int): Try[List[ReceivedMessage]] = {
-      val result = pullSync(subscription, maxMessages, returnImmediately); result match {
+      val result = pullSync(project, subscription, pullRequest); result match {
         case Failure(_) if count>0 => loop(count-1)
         case _ => result
       }
@@ -67,6 +68,16 @@ class ReactivePubsub(val javaPubsub: Pubsub) extends PublisherTrait {
 
     loop(numRetries)
   }
+
+  private def pull(project: String, subscription: String, pullRequest: PullRequest): List[ReceivedMessage] =
+    try {
+      PullResponse(
+        javaPubsub.projects().subscriptions
+          .pull(fqrn("subscriptions", project, subscription), pullRequest).execute())
+    } catch {
+      case e: Throwable => List.empty[ReceivedMessage]
+    }
+
 
   def getSubscriptions(project: String, subscription: String) = {
     type Req = Pubsub#Projects#Subscriptions#List
@@ -132,12 +143,9 @@ class ReactivePubsub(val javaPubsub: Pubsub) extends PublisherTrait {
 
 object ReactivePubsub {
 
-  def apply(appName:String) (implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub =
-    apply(appName, None)(system, context)
+  def apply(appName:String): ReactivePubsub = apply(appName, None)
 
-  def apply
-      (appName: String, url: Option[String])
-      (implicit system: ActorSystem, context: ExecutionContext): ReactivePubsub = {
+  def apply(appName: String, url: Option[String]): ReactivePubsub = {
 
     val p: Pubsub.Builder = PortableConfiguration.createPubsubClient()
       .setApplicationName(appName)

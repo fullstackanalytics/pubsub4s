@@ -65,6 +65,7 @@ public class RetryHttpInitializerWrapper implements HttpRequestInitializer {
                             // the return code or message indicated
                             // something specific to authentication,
                             // and no backoff is desired.
+                            LOG.info("Retrying with credentials...");
                             return true;
                         } else if (backoffHandler.handleResponse(
                                 request, response, supportsRetry)) {
