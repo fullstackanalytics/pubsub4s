@@ -4,6 +4,7 @@ import akka.actor.ActorSystem
 import akka.NotUsed
 import akka.stream.scaladsl._
 import com.google.api.services.pubsub.model.ListSubscriptionsResponse
+import com.google.api.client.googleapis.json.GoogleJsonResponseException
 import utils.PortableConfiguration
 
 import scala.concurrent._
@@ -158,6 +159,6 @@ object ReactivePubsub {
   def fqrn(resourceType:String, project:String, resource:String) = s"projects/${project}/${resourceType}/${resource}"
 
   val ignoreAlreadyExists : PartialFunction[Throwable,_] =
-    { case er: Throwable if er.getMessage.take(3) == "409" => () }
+    { case e: GoogleJsonResponseException if e.getDetails.getCode == 409 => () }
 
 }
