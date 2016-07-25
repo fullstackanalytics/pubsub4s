@@ -135,8 +135,11 @@ class ReactivePubsub(val javaPubsub: Pubsub) extends PublisherTrait {
       (project: String, topic: String)(messages: Seq[PubsubMessage])
       (implicit ec: ExecutionContext, s: ActorSystem) =
     PublishRequest(messages) match {
-      case Success(m) =>
-        Future(javaPubsub.projects().topics().publish(fqrn("topics", project, topic), m).execute())
+      case Success(m) => Future {
+        blocking {
+          javaPubsub.projects().topics().publish(fqrn("topics", project, topic), m).execute()
+        }
+      }
       case Failure(e) => Future.failed(e)
     }
 
