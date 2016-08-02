@@ -2,13 +2,15 @@ package com.google.api.services.pubsub
 
 import akka.actor.ActorSystem
 import akka.NotUsed
+import akka.event.LoggingAdapter
 import akka.stream.scaladsl._
 import com.google.api.services.pubsub.model.ListSubscriptionsResponse
 import com.google.api.client.googleapis.json.GoogleJsonResponseException
+import com.google.api.services.pubsub.PublishResponse.MessageId
 import utils.PortableConfiguration
 
 import scala.concurrent._
-import scala.util.{Failure, Try, Success}
+import scala.util.{Failure, Success, Try}
 import scala.language.implicitConversions._
 import scala.collection.JavaConverters._
 
@@ -131,15 +133,20 @@ class ReactivePubsub(val javaPubsub: Pubsub) extends PublisherTrait {
 
   def createTopicIgnore(project: String, topic: String) = createTopic(project, topic) recover ignoreAlreadyExists
 
+  def publish[T]
+  (project: String, topic: String)(messages: Seq[T], converter: T => PubsubMessage)
+  (implicit ec: ExecutionContext, log: LoggingAdapter): Future[List[MessageId]] =
+    Future(messages map converter) flatMap (publish(project, topic, _))
+
   def publish
-      (project: String, topic: String)(messages: Seq[PubsubMessage])
-      (implicit ec: ExecutionContext, s: ActorSystem) =
+      (project: String, topic: String, messages: Seq[PubsubMessage])
+      (implicit ec: ExecutionContext, log: LoggingAdapter): Future[List[MessageId]] =
     PublishRequest(messages) match {
       case Success(m) => Future {
         blocking {
-          javaPubsub.projects().topics().publish(fqrn("topics", project, topic), m).execute()
+          PublishResponse(javaPubsub.projects().topics().publish(fqrn("topics", project, topic), m).execute())
         }
-      }
+      } recover { case e : GoogleJsonResponseException => log.error(e, s"the request was ${m.toString}"); throw e }
       case Failure(e) => Future.failed(e)
     }
 
